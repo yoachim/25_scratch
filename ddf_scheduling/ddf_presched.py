@@ -11,7 +11,15 @@ from rubin_scheduler.site_models import Almanac
 from rubin_scheduler.utils import SURVEY_START_MJD, calc_season, ddf_locations
 
 
-def ddf_slopes(ddf_name, raw_obs, night_season, season_seq=30, min_season_length=0 / 365.25):
+def ddf_slopes(
+    ddf_name,
+    raw_obs,
+    night_season,
+    season_seq=30,
+    min_season_length=0 / 365.25,
+    boost_early_factor=None,
+    boost_factor_third=2.0,
+):
     """
     Let's make custom slopes for each DDF
 
@@ -37,6 +45,10 @@ def ddf_slopes(ddf_name, raw_obs, night_season, season_seq=30, min_season_length
         on the basis that most of the short season concerns will be
         early in the survey and we'd rather have some observations early
         than wait.
+    boost_early_factor : `float`, optional
+        Number of early seasons to give a boost to
+    boost_factor_third : `float`
+        If boosting, the boot factor to use on the third season.
     """
 
     # OK, so 258 sequences is ~1% of the survey
@@ -66,22 +78,18 @@ def ddf_slopes(ddf_name, raw_obs, night_season, season_seq=30, min_season_length
 
     # Add extra adjustment for COSMOS to boost visits in seasons 0-3
     # Also boost -1 season, if it's not too short
-    boost_early_years = 5
-    if ddf_name == "COSMOS":
+    if boost_early_factor is not None:
         early_season = np.where(season_list == -1)[0]
         if len(early_season) > 0:
+            # XXX-some magic numbers here.
             max_n_seq_early = (season_length[early_season][0] * 365.25) / 3
             # Choose the minimum of - sequence every third night (?)
-            # or the standard season sequence * boost_early_years.
-            season_vals[early_season] = np.min([max_n_seq_early, season_seq * boost_early_years])
+            # or the standard season sequence * boost_early_factor.
+            season_vals[early_season] = np.min([max_n_seq_early, season_seq * boost_early_factor])
         first_full_two_seasons = np.where((season_list == 0) | (season_list == 1))
-        season_vals[first_full_two_seasons] *= boost_early_years
+        season_vals[first_full_two_seasons] *= boost_early_factor
         third_season = np.where(season_list == 2)
-        season_vals[third_season] *= boost_early_years / 2.5
-
-    if ddf_name == "EDFS_b":
-        # EDFS_b ddf visits are allocated some other way
-        season_vals = season_vals * 0
+        season_vals[third_season] *= boost_factor_third
 
     # Round the season_vals -- we're looking for integer numbers of sequences
     season_vals = np.round(season_vals)
@@ -97,8 +105,6 @@ def ddf_slopes(ddf_name, raw_obs, night_season, season_seq=30, min_season_length
         if cumulative.max() > 0:
             cumulative = cumulative / cumulative.max() * season_vals[i]
             cumulative_desired[this_season] = cumulative + np.max(cumulative_desired)
-
-    # print(ddf_name, season_vals, cumulative_desired.max())
 
     return cumulative_desired
 
@@ -173,6 +179,9 @@ def optimize_ddf_times(
     low_season_frac=0,
     low_season_rate=0.3,
     mjd_start=SURVEY_START_MJD,
+    season_seq=30,
+    boost_early_factor=None,
+    boost_factor_third=2,
 ):
     """
 
@@ -293,7 +302,14 @@ def optimize_ddf_times(
     raw_obs[out_season] = 0
     raw_obs[low_season] = low_season_rate
 
-    cumulative_desired = ddf_slopes(ddf_name, raw_obs, night_season)
+    cumulative_desired = ddf_slopes(
+        ddf_name,
+        raw_obs,
+        night_season,
+        season_seq=season_seq,
+        boost_early_factor=boost_early_factor,
+        boost_factor_third=boost_factor_third,
+    )
 
     # Identify which nights (only scheduling 1 sequence per night)
     # would be usable, based on the masks above.
@@ -341,6 +357,7 @@ def generate_ddf_scheduled_obs(
     season_unobs_frac=0.2,
     low_season_frac=0,
     low_season_rate=0.3,
+    ddf_kwargs=None,
 ):
     """
 
@@ -401,6 +418,9 @@ def generate_ddf_scheduled_obs(
         of the season. During the standard season, the 'rate' is 1.
         This is used in `ddf_slopes` to define the desired number of
         cumulative observations for each DDF over time.
+    ddf_kwargs : `dict`
+        Dictionary to hold custom kwargs for each DDF. Default of None
+        will use internal defaults.
     """
     if data_file is None:
         data_file = os.path.join(get_data_dir(), "scheduler", "ddf_grid.npz")
@@ -428,18 +448,67 @@ def generate_ddf_scheduled_obs(
     in_range = np.where((ddf_grid["mjd"] >= mjd_start) & (ddf_grid["mjd"] <= mjd_max))
     ddf_grid = ddf_grid[in_range]
 
+    if ddf_kwargs is None:
+        ddf_kwargs = {}
+        ddf_kwargs["ELAISS1"] = {
+            "season_seq": 30,
+            "boost_early_factor": None,
+            "boost_factor_third": 0,
+            "season_unobs_frac": season_unobs_frac,
+            "sequence_time": sequence_time,
+            "low_season_frac": low_season_frac,
+            "low_season_rate": low_season_rate,
+        }
+
+        ddf_kwargs["XMM_LSS"] = {
+            "season_seq": 30,
+            "boost_early_factor": None,
+            "boost_factor_third": 0,
+            "season_unobs_frac": season_unobs_frac,
+            "sequence_time": sequence_time,
+            "low_season_frac": low_season_frac,
+            "low_season_rate": low_season_rate,
+        }
+
+        ddf_kwargs["ECDFS"] = {
+            "season_seq": 30,
+            "boost_early_factor": None,
+            "boost_factor_third": 0,
+            "season_unobs_frac": season_unobs_frac,
+            "sequence_time": sequence_time,
+            "low_season_frac": low_season_frac,
+            "low_season_rate": low_season_rate,
+        }
+
+        ddf_kwargs["COSMOS"] = {
+            "season_seq": 30,
+            "boost_early_factor": 5.0,
+            "boost_factor_third": 2,
+            "season_unobs_frac": season_unobs_frac,
+            "sequence_time": sequence_time,
+            "low_season_frac": low_season_frac,
+            "low_season_rate": low_season_rate,
+        }
+
+        ddf_kwargs["EDFS_a"] = {
+            "season_seq": 30,
+            "boost_early_factor": None,
+            "boost_factor_third": 0,
+            "season_unobs_frac": season_unobs_frac,
+            "sequence_time": sequence_time,
+            "low_season_frac": low_season_frac,
+            "low_season_rate": low_season_rate,
+        }
+
     all_scheduled_obs = []
-    for ddf_name in ["ELAISS1", "XMM_LSS", "ECDFS", "COSMOS", "EDFS_a"]:
+    for ddf_name in ddf_kwargs:
         print("Optimizing %s" % ddf_name)
 
         mjds = optimize_ddf_times(
             ddf_name,
             ddfs[ddf_name][0],
             ddf_grid,
-            season_unobs_frac=season_unobs_frac,
-            sequence_time=sequence_time,
-            low_season_frac=low_season_frac,
-            low_season_rate=low_season_rate,
+            **ddf_kwargs[ddf_name],
         )[0]
         for mjd in mjds:
             for bandname, nvis, nexp in zip(bands, nvis_master, nsnaps):
