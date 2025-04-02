@@ -1,5 +1,7 @@
+from functools import cache
 import numpy as np
 import warnings
+import copy
 import healpy as hp
 
 import rubin_scheduler.utils as utils
@@ -24,13 +26,26 @@ class MeanMetric(object):
         info["metric: col"] = self.col
         info["metric: unit"] = self.unit
         return info
-    # XXX--should we add a cache decorator here? 
-    # no big deal for Mean, but should speed up expensive metrics
+    
     def __call__(self, visits, slice_point=None):
         return np.mean(visits[self.col])
 
+    @cache
+    def call_cached_post(self, hashable):
+        return self.__call__(self.visits, slice_point=self.slice_point)
 
-class CoaddM5Metric(object):
+    def call_cached(self, hashable, visits=None, slice_point=None):
+        """hashable should be something like a frozenset of 
+        visitIDs. If you use call_cached when slicepoint has 
+        important data (extinction, stellar density, etc),
+        then this can give a different (wrong) result
+        """
+        self.visits = visits
+        self.slice_point = slice_point
+        return self.call_cached_post(hashable)
+
+
+class CoaddM5Metric(MeanMetric):
     def __init__(self, col="fiveSigmaDepth", unit=None):
         self.shape = None
         self.dtype = float
@@ -58,7 +73,7 @@ class CoaddM5Metric(object):
         return result
 
 
-class FancyMetric(object):
+class FancyMetric(MeanMetric):
     """Example of returning multiple values in a metric
     """
     def __init__(self, col="night"):
@@ -74,13 +89,13 @@ class FancyMetric(object):
         return result
 
 
-class VectorMetric(object):
+class VectorMetric(MeanMetric):
     """Example of returning a vector
     """
     def __init__(self, times=np.arange(60), col="night",
                  time_col="night", function=np.add):
         self.shape = np.size(times)
-        self.dtype = int
+        self.dtype = float
         self.col = col
         self.function = function
         self.time_col = time_col
@@ -145,7 +160,8 @@ class Slicer(object):
         camera_footprint_file=None,
         rot_sky_pos_col_name="rotSkyPos",
         missing=np.nan,
-        maps=None
+        maps=None,
+        cache=True
     ):
         
         self.nside = int(nside)
@@ -165,6 +181,8 @@ class Slicer(object):
 
         self.radius = radius
         self.maps = maps
+
+        self.cache = cache
         
         # Set up slice_point
         self.slice_points = {}
@@ -241,7 +259,7 @@ class Slicer(object):
             is available to metrics via the slice_point dictionary.
         """
         if maps is not None:
-            if self.cache_size != 0 and len(maps) > 0:
+            if self.cache and len(maps) > 0:
                 warnings.warn(
                     "Warning:  Loading maps but cache on." "Should probably set use_cache=False in slicer."
                 )
@@ -346,13 +364,11 @@ class Slicer(object):
         for i, slice_i in enumerate(self):
             if len(slice_i["idxs"]) != 0:
                 slicedata = df.iloc[slice_i["idxs"]]
-                result[i] = metric(slicedata, slice_point=slice_i["slice_point"])
-        result = np.array(result)
-
-        # Probably want to also return relevant data
-        # about the slicer and metric. Maybe just the slice_points, 
-        # and some data structure of "metric info" that includes a 
-        # name, units of the output, times if needed, etc
+                if self.cache:
+                    result[i] = metric.call_cached(frozenset(slicedata["observationId"].to_list()), 
+                                                   slicedata, slice_point=slice_i["slice_point"])
+                else:
+                    result[i] = metric(slicedata, slice_point=slice_i["slice_point"])
 
         if info is None:
             return result
@@ -381,8 +397,10 @@ class PlotMoll():
         """
         if info is not None:
             result = {}
-            result["title"] = info["run_name"]
-            result["unit"] = info["metric: unit"]
+            if "run_name" in info.keys():
+                result["title"] = info["run_name"]
+            if "metric: unit" in info.keys():
+                result["unit"] = info["metric: unit"]
         return result
 
     def __call__(self, inarray):
@@ -391,7 +409,8 @@ class PlotMoll():
                     unit=self.plot_dict["unit"])
 
 
-def summary_row(val, info):
-    """Generate a row for the summary stat table
-    """
-    pass
+def gen_summary_row(info, summary_name, value):
+    summary = copy.copy(info)
+    summary["summary_name"] = summary_name
+    summary["value"] = value
+    return summary
