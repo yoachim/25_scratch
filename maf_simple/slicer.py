@@ -12,17 +12,18 @@ UNIT_LOOKUP_DICT = {"night": "Days", "fiveSigmaDepth": "mag"}
 class MeanMetric(object):
     """Example of a simple metric.
     """
-    def __init__(self, col="night", unit=None):
+    def __init__(self, col="night", unit=None, name="Mean"):
         self.shape = None
         self.dtype = float
         self.col = col
+        self.name = name
         if unit is None:
             self.unit = UNIT_LOOKUP_DICT[self.col]
         else:
             self.unit = unit
 
     def add_info(self, info):
-        info["metric: name"] = "Mean"
+        info["metric: name"] = self.name
         info["metric: col"] = self.col
         info["metric: unit"] = self.unit
         return info
@@ -43,6 +44,14 @@ class MeanMetric(object):
         self.visits = visits
         self.slice_point = slice_point
         return self.call_cached_post(hashable)
+
+
+class CountMetric(MeanMetric):
+    def __init__(self, col="night", unit="#", name="Count"):
+        super().__init__(col=col, unit=unit, name=name)
+
+    def __call__(self, visits, slice_point=None):
+        return np.size(visits[self.col])
 
 
 class CoaddM5Metric(MeanMetric):
