@@ -6,7 +6,7 @@ import healpy as hp
 
 import rubin_scheduler.utils as utils
 
-UNIT_LOOKUP_DICT = {"night": "Days", "fiveSigmaDepth": "mag"}
+UNIT_LOOKUP_DICT = {"night": "Days", "fiveSigmaDepth": "mag", "airmass": "airmass"}
 
 
 class MeanMetric(object):
@@ -237,19 +237,8 @@ class Slicer(object):
     def __getitem__(self, islice):
         return self._slice_sim_data(islice)
 
-    def __eq__(self, other_slicer):
-        """Evaluate if two slicers are equivalent."""
-        raise NotImplementedError()
-
-    def __ne__(self, other_slicer):
-        """Evaluate if two slicers are not equivalent."""
-        if self == other_slicer:
-            return False
-        else:
-            return True
-
     def _run_maps(self, maps):
-        """Add map metadata to slice_points."""
+        """Add map info to slice_points."""
         if maps is not None:
             for m in maps:
                 self.slice_points = m.run(self.slice_points)
@@ -412,10 +401,10 @@ class PlotMoll():
                 result["unit"] = info["metric: unit"]
         return result
 
-    def __call__(self, inarray):
+    def __call__(self, inarray, **kwargs):
 
         hp.mollview(inarray, title=self.plot_dict["title"],
-                    unit=self.plot_dict["unit"])
+                    unit=self.plot_dict["unit"], **kwargs)
 
 
 def gen_summary_row(info, summary_name, value):
