@@ -345,18 +345,27 @@ class Slicer(object):
         return info
 
     def __call__(self, df, metric, info=None):
-        # XXX-make a check here if it's a new df and need to re-run setup
+        """
+        """
         self.setup_slicer(df)
+
+        if self.cache:
+            if not hasattr(metric, 'call_cached'):
+                warnings.warn("Metric does not support cache, turning cache off")
+                self.cache = False
 
         # XXX-Check if the metric needs any maps loaded or 
         # new columns added to the df
 
         # See what dtype the metric will return, 
         # make an array to hold it. 
-        if metric.shape is None:
-            result = np.empty(self.shape, dtype=metric.dtype)
+        if hasattr(metric, "shape"):
+            if metric.shape is None:
+                result = np.empty(self.shape, dtype=metric.dtype)
+            else:
+                result = np.empty((self.shape, metric.shape), dtype=metric.dtype)
         else:
-            result = np.empty((self.shape, metric.shape), dtype=metric.dtype)
+            result = np.empty(self.shape, dtype=float)
         result.fill(self.missing)
 
         for i, slice_i in enumerate(self):
@@ -372,7 +381,8 @@ class Slicer(object):
             return result
         else:
             info = self.add_info(info)
-            info = metric.add_info(info)
+            if hasattr(metric, "add_info"):
+                info = metric.add_info(info)
             return result, info
 
 
