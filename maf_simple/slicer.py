@@ -9,10 +9,10 @@ import rubin_scheduler.utils as utils
 UNIT_LOOKUP_DICT = {"night": "Days", "fiveSigmaDepth": "mag", "airmass": "airmass"}
 
 
-class MeanMetric(object):
+class BaseMetric(object):
     """Example of a simple metric.
     """
-    def __init__(self, col="night", unit=None, name="Mean"):
+    def __init__(self, col="night", unit=None, name="name"):
         self.shape = None
         self.dtype = float
         self.col = col
@@ -29,11 +29,7 @@ class MeanMetric(object):
         return info
     
     def __call__(self, visits, slice_point=None):
-        return np.mean(visits[self.col])
-
-    @cache
-    def call_cached_post(self, hashable):
-        return self.__call__(self.visits, slice_point=self.slice_point)
+        pass
 
     def call_cached(self, hashable, visits=None, slice_point=None):
         """hashable should be something like a frozenset of 
@@ -44,6 +40,20 @@ class MeanMetric(object):
         self.visits = visits
         self.slice_point = slice_point
         return self.call_cached_post(hashable)
+
+    # XXX--danger, this simple caching can cause a memory leak.
+    # Probably need to do the caching in the slicer as before.
+    @cache
+    def call_cached_post(self, hashable):
+        return self.__call__(self.visits, slice_point=self.slice_point)
+
+
+class MeanMetric(BaseMetric):
+    def __init__(self, col="night", unit=None, name="name"):
+        super().__init__(col=col, unit=unit, name="mean")
+
+    def __call__(self, visits, slice_point=None):
+        return np.mean(visits[self.col])
 
 
 class CountMetric(MeanMetric):
@@ -117,7 +127,7 @@ class VectorMetric(MeanMetric):
 
     def __call__(self, visits, slice_point):
         
-        visit_times = visits[self.time_col].to_numpy()
+        visit_times = visits[self.time_col]
         visit_times.sort()
         to_count = np.ones(visit_times.size, dtype=int)
         result = self.function.accumulate(to_count)
@@ -170,7 +180,7 @@ class Slicer(object):
         rot_sky_pos_col_name="rotSkyPos",
         missing=np.nan,
         maps=None,
-        cache=True
+        cache=False
     ):
         
         self.nside = int(nside)
@@ -244,8 +254,7 @@ class Slicer(object):
                 self.slice_points = m.run(self.slice_points)
 
     def setup_slicer(self, sim_data, maps=None):
-        """Use sim_data[self.lon_col] and sim_data[self.lat_col]
-        (in radians) to set up KDTree.
+        """set up KDTree.
 
         Parameters
         -----------
@@ -265,13 +274,13 @@ class Slicer(object):
         self._set_rad(self.radius)
 
         if self.lat_lon_deg:
-            self.data_ra = np.radians(sim_data[self.lon_col].to_numpy())
-            self.data_dec = np.radians(sim_data[self.lat_col].to_numpy())
-            self.data_rot = np.radians(sim_data[self.rot_sky_pos_col_name].to_numpy())
+            self.data_ra = np.radians(sim_data[self.lon_col])
+            self.data_dec = np.radians(sim_data[self.lat_col])
+            self.data_rot = np.radians(sim_data[self.rot_sky_pos_col_name])
         else:
-            self.data_ra = sim_data[self.lon_col].to_numpy()
-            self.data_dec = sim_data[self.lat_col].to_numpy()
-            self.data_rot = sim_data[self.rot_sky_pos_col_name].to_numpy()
+            self.data_ra = sim_data[self.lon_col]
+            self.data_dec = sim_data[self.lat_col]
+            self.data_rot = sim_data[self.rot_sky_pos_col_name]
         if self.use_camera:
             self._setupLSSTCamera()
 
@@ -344,46 +353,98 @@ class Slicer(object):
 
         return info
 
-    def __call__(self, df, metric, info=None):
+    def __call__(self, input_visits, metric_s, info=None):
         """
+
+        Parameters
+        ----------
+        input_vistis : `np.array`
+            Array with the visit information. If a pandas 
+            DataFrame gets passed in, it gets converted 
+            via .to_records method for slicing efficiency.
+        metric_s : callable
+            A callable function/class or list of callables
+            that take an array of visits and slicepoints as 
+            input
+        info : `dict`
+            Dict or list of dicts for holding information 
+            about the analysis process.
         """
-        self.setup_slicer(df)
 
-        if self.cache:
-            if not hasattr(metric, 'call_cached'):
-                warnings.warn("Metric does not support cache, turning cache off")
-                self.cache = False
+        if hasattr(input_visits, "to_records"):
+            visits_array = input_visits.to_records(index=False)
+        else:
+            visits_array = input_visits
 
+        if not isinstance(visits_array, np.ndarray):
+            raise ValueError("input_visits should be numpy array or pandas DataFrame.")
+
+        orig_info = copy.copy(info)
+        # Construct the KD Tree for this dataset
+        self.setup_slicer(visits_array)
+
+        # Check metric_s and info are same length
+        if info is not None:
+            if isinstance(metric_s, list):
+                matching_len = len(metric_s) == len(info)
+                if not matching_len:
+                    raise ValueError("Length of metric_s must match info length")
+
+        # Naked metric sent in, wrap as a 1-element list
+        if not isinstance(metric_s, list):
+            metric_s = [metric_s]
+            info = [info]
+
+        for metric in metric_s:
+            if self.cache:
+                if not hasattr(metric, 'call_cached'):
+                    warnings.warn("Metric does not support cache, turning cache off")
+                    self.cache = False
         # XXX-Check if the metric needs any maps loaded or 
         # new columns added to the df
 
+        results = []
+        final_info = []
         # See what dtype the metric will return, 
         # make an array to hold it. 
-        if hasattr(metric, "shape"):
-            if metric.shape is None:
-                result = np.empty(self.shape, dtype=metric.dtype)
+        for metric, single_info in zip(metric_s, info):
+            if hasattr(metric, "shape"):
+                if metric.shape is None:
+                    result = np.empty(self.shape, dtype=metric.dtype)
+                else:
+                    result = np.empty((self.shape, metric.shape), dtype=metric.dtype)
             else:
-                result = np.empty((self.shape, metric.shape), dtype=metric.dtype)
-        else:
-            result = np.empty(self.shape, dtype=float)
-        result.fill(self.missing)
+                result = np.empty(self.shape, dtype=float)
+            result.fill(self.missing)
+            results.append(result)
 
         for i, slice_i in enumerate(self):
             if len(slice_i["idxs"]) != 0:
-                slicedata = df.iloc[slice_i["idxs"]]
-                if self.cache:
-                    result[i] = metric.call_cached(frozenset(slicedata["observationId"].to_list()), 
-                                                   slicedata, slice_point=slice_i["slice_point"])
-                else:
-                    result[i] = metric(slicedata, slice_point=slice_i["slice_point"])
+                slicedata = visits_array[slice_i["idxs"]]
+                for j, metric in enumerate(metric_s):
+                    if self.cache:
+                        results[j][i] = metric.call_cached(frozenset(slicedata["observationId"].tolist()),
+                                                           slicedata, slice_point=slice_i["slice_point"])
+                    else:
+                        results[j][i] = metric(slicedata, slice_point=slice_i["slice_point"])
 
-        if info is None:
-            return result
+        if orig_info is not None:
+            for single_info, metric in zip(info, metric_s):
+                if single_info is not None:
+                    single_info = self.add_info(single_info)
+                    if hasattr(metric, "add_info"):
+                        single_info = metric.add_info(single_info)
+                final_info.append(single_info)
+
+        # Unwrap if single metric sent in
+        if orig_info is None:
+            if len(results) == 1:
+                return results[0]
+            return results
         else:
-            info = self.add_info(info)
-            if hasattr(metric, "add_info"):
-                info = metric.add_info(info)
-            return result, info
+            if len(results) == 1:
+                return results[0], final_info[0]
+            return results, final_info
 
 
 class PlotMoll():
