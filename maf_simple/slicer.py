@@ -5,6 +5,7 @@ import copy
 import healpy as hp
 
 import rubin_scheduler.utils as utils
+import matplotlib.pylab as plt
 
 UNIT_LOOKUP_DICT = {"night": "Days", "fiveSigmaDepth": "mag", "airmass": "airmass"}
 
@@ -207,19 +208,8 @@ class Slicer(object):
         self.slice_points = {}
         self.slice_points["nside"] = nside
         self.slice_points["sid"] = np.arange(self.nslice)
-        self.slice_points["ra"], self.slice_points["dec"] = self._pix2radec(self.slice_points["sid"])
-    
-    def _pix2radec(self, islice):
-        """Given the pixel number / sliceID, return the RA/Dec of the
-        pointing, in radians.
-        """
-        # Calculate RA/Dec in RADIANS of pixel in this healpix slicer.
-        # Note that ipix could be an array,
-        # in which case RA/Dec values will be an array also.
-        lat, ra = hp.pix2ang(self.nside, islice)
-        # Move dec to +/- 90 degrees
-        dec = np.pi / 2.0 - lat
-        return ra, dec
+        self.slice_points["ra"], self.slice_points["dec"] = utils._hpid2_ra_dec(self.nside,
+                                                                                self.slice_points["sid"])
 
     def __len__(self):
         """Return nslice, the number of slice_points in the slicer."""
@@ -476,6 +466,31 @@ class PlotMoll():
 
         hp.mollview(inarray, title=self.plot_dict["title"],
                     unit=self.plot_dict["unit"], **kwargs)
+
+
+class PlotHist(PlotMoll):
+    def _gen_default_labels(self, info):
+        """
+        """
+        result = {"ylabel": "#"}
+        result["title"] = ""
+        result["xlabel"] = ""
+        if info is not None:
+            if "run_name" in info.keys():
+                result["title"] = info["run_name"]
+            if "metric: unit" in info.keys():
+                result["xlabel"] = info["metric: unit"]
+
+        return result
+
+    def __call__(self, inarray, **kwargs):
+        fig, ax = plt.subplots()
+        _n, _bins, _patches = ax.hist(inarray, **kwargs)
+        ax.set_title(self.plot_dict["title"])
+        ax.set_xlabel(self.plot_dict["xlabel"])
+        ax.set_ylabel(self.plot_dict["ylabel"])
+        
+        return fig
 
 
 def gen_summary_row(info, summary_name, value):
