@@ -6,13 +6,15 @@ import healpy as hp
 
 import rubin_scheduler.utils as utils
 import matplotlib.pylab as plt
+from matplotlib import ticker
+
 
 UNIT_LOOKUP_DICT = {"night": "Days", "fiveSigmaDepth": "mag", "airmass": "airmass"}
 
 
 class BaseMetric(object):
-    """Example of a simple metric.
-    """
+    """Example of a simple metric."""
+
     def __init__(self, col="night", unit=None, name="name"):
         self.shape = None
         self.dtype = float
@@ -28,13 +30,13 @@ class BaseMetric(object):
         info["metric: col"] = self.col
         info["metric: unit"] = self.unit
         return info
-    
+
     def __call__(self, visits, slice_point=None):
         pass
 
     def call_cached(self, hashable, visits=None, slice_point=None):
-        """hashable should be something like a frozenset of 
-        visitIDs. If you use call_cached when slicepoint has 
+        """hashable should be something like a frozenset of
+        visitIDs. If you use call_cached when slicepoint has
         important data (extinction, stellar density, etc),
         then this can give a different (wrong) result
         """
@@ -66,17 +68,18 @@ class CountMetric(MeanMetric):
 
 
 class CoaddM5Metric(MeanMetric):
-    def __init__(self, col="fiveSigmaDepth", unit=None):
+    def __init__(self, filtername, col="fiveSigmaDepth", unit=None):
         self.shape = None
         self.dtype = float
         self.col = col
+        self.filtername = filtername
         if unit is None:
-            self.unit = UNIT_LOOKUP_DICT[self.col]
+            self.unit = "Coadded Depth, %s (mags)" % self.filtername
         else:
             self.unit = unit
 
     def add_info(self, info):
-        info["metric: name"] = "CoaddM5Metric"
+        info["metric: name"] = "CoaddM5Metric" # self.__class__.name ?
         info["metric: col"] = self.col
         info["metric: unit"] = self.unit
         return info
@@ -94,8 +97,8 @@ class CoaddM5Metric(MeanMetric):
 
 
 class FancyMetric(MeanMetric):
-    """Example of returning multiple values in a metric
-    """
+    """Example of returning multiple values in a metric"""
+
     def __init__(self, col="night"):
         self.shape = None
         self.dtype = list(zip(["mean", "std"], [float, float]))
@@ -110,10 +113,11 @@ class FancyMetric(MeanMetric):
 
 
 class VectorMetric(MeanMetric):
-    """Example of returning a vector
-    """
-    def __init__(self, times=np.arange(60), col="night",
-                 time_col="night", function=np.add):
+    """Example of returning a vector"""
+
+    def __init__(
+        self, times=np.arange(60), col="night", time_col="night", function=np.add
+    ):
         self.shape = np.size(times)
         self.dtype = float
         self.col = col
@@ -127,7 +131,7 @@ class VectorMetric(MeanMetric):
         return info
 
     def __call__(self, visits, slice_point):
-        
+
         visit_times = visits[self.time_col]
         visit_times.sort()
         to_count = np.ones(visit_times.size, dtype=int)
@@ -181,9 +185,9 @@ class Slicer(object):
         rot_sky_pos_col_name="rotSkyPos",
         missing=np.nan,
         maps=None,
-        cache=False
+        cache=False,
     ):
-        
+
         self.nside = int(nside)
         self.pix_area = hp.nside2pixarea(self.nside)
         self.nslice = hp.nside2npix(self.nside)
@@ -203,13 +207,14 @@ class Slicer(object):
         self.maps = maps
 
         self.cache = cache
-        
+
         # Set up slice_point
         self.slice_points = {}
         self.slice_points["nside"] = nside
         self.slice_points["sid"] = np.arange(self.nslice)
-        self.slice_points["ra"], self.slice_points["dec"] = utils._hpid2_ra_dec(self.nside,
-                                                                                self.slice_points["sid"])
+        self.slice_points["ra"], self.slice_points["dec"] = utils._hpid2_ra_dec(
+            self.nside, self.slice_points["sid"]
+        )
 
     def __len__(self):
         """Return nslice, the number of slice_points in the slicer."""
@@ -258,7 +263,8 @@ class Slicer(object):
         if maps is not None:
             if self.cache and len(maps) > 0:
                 warnings.warn(
-                    "Warning:  Loading maps but cache on." "Should probably set use_cache=False in slicer."
+                    "Warning:  Loading maps but cache on."
+                    "Should probably set use_cache=False in slicer."
                 )
             self._run_maps(maps)
         self._set_rad(self.radius)
@@ -349,15 +355,15 @@ class Slicer(object):
         Parameters
         ----------
         input_vistis : `np.array`
-            Array with the visit information. If a pandas 
-            DataFrame gets passed in, it gets converted 
+            Array with the visit information. If a pandas
+            DataFrame gets passed in, it gets converted
             via .to_records method for slicing efficiency.
         metric_s : callable
             A callable function/class or list of callables
-            that take an array of visits and slicepoints as 
+            that take an array of visits and slicepoints as
             input
         info : `dict`
-            Dict or list of dicts for holding information 
+            Dict or list of dicts for holding information
             about the analysis process.
         """
 
@@ -387,16 +393,16 @@ class Slicer(object):
 
         for metric in metric_s:
             if self.cache:
-                if not hasattr(metric, 'call_cached'):
+                if not hasattr(metric, "call_cached"):
                     warnings.warn("Metric does not support cache, turning cache off")
                     self.cache = False
-        # XXX-Check if the metric needs any maps loaded or 
+        # XXX-Check if the metric needs any maps loaded or
         # new columns added to the df
 
         results = []
         final_info = []
-        # See what dtype the metric will return, 
-        # make an array to hold it. 
+        # See what dtype the metric will return,
+        # make an array to hold it.
         for metric, single_info in zip(metric_s, info):
             if hasattr(metric, "shape"):
                 if metric.shape is None:
@@ -413,10 +419,15 @@ class Slicer(object):
                 slicedata = visits_array[slice_i["idxs"]]
                 for j, metric in enumerate(metric_s):
                     if self.cache:
-                        results[j][i] = metric.call_cached(frozenset(slicedata["observationId"].tolist()),
-                                                           slicedata, slice_point=slice_i["slice_point"])
+                        results[j][i] = metric.call_cached(
+                            frozenset(slicedata["observationId"].tolist()),
+                            slicedata,
+                            slice_point=slice_i["slice_point"],
+                        )
                     else:
-                        results[j][i] = metric(slicedata, slice_point=slice_i["slice_point"])
+                        results[j][i] = metric(
+                            slicedata, slice_point=slice_i["slice_point"]
+                        )
 
         if orig_info is not None:
             for single_info, metric in zip(info, metric_s):
@@ -437,59 +448,297 @@ class Slicer(object):
             return results, final_info
 
 
-class PlotMoll():
-    def __init__(self, info=None, plot_dict=None):
+class BasePlot(object):
+    def __init__(self, info=None):
 
         self.info = info
-        self.plot_dict = plot_dict
+        self.plot_dict = self._gen_default_labels(info)
 
-        starter = self._gen_default_labels(info)
-        if self.plot_dict is None:
-            self.plot_dict = starter
-        else:
-            for key in starter:
-                if key not in self.plot_dict.keys():
-                    self.plot_dict[key] = starter[key]
+
+class PlotMoll:
+    """Plot a mollweild projection of a HEALpix array.
+    """
+    def __init__(self, info=None):
+
+        self.info = info
+        self.moll_kwarg_dict = self._gen_default_labels(info)
 
     def _gen_default_labels(self, info):
-        """
-        """
+        """ """
         if info is not None:
             result = {}
             if "run_name" in info.keys():
                 result["title"] = info["run_name"]
+            else:
+                result["title"] = ''
+            if "observations_subset" in info.keys():
+                result["title"] += "\n"+info["observations_subset"]
+
             if "metric: unit" in info.keys():
                 result["unit"] = info["metric: unit"]
         return result
 
-    def __call__(self, inarray, **kwargs):
+    def default_cb_params(self):
+        cb_params = {
+            "shrink": 0.75,
+            "aspect": 25,
+            "pad": 0.1,
+            "orientation": "horizontal",
+            "format": "%.1f",
+            "extendrect": False,
+            "extend": "neither",
+            "labelsize": None,
+            "n_ticks": 10,
+            "cbar_edge": True,
+            "fontsize": None,
+            "label": None,
+        }
+        return cb_params
 
-        hp.mollview(inarray, title=self.plot_dict["title"],
-                    unit=self.plot_dict["unit"], **kwargs)
+    def __call__(
+        self,
+        inarray,
+        fig=None,
+        add_grat=True,
+        grat_params="default",
+        cb_params="default",
+        log=False,
+        **kwargs,
+    ):
+        """
+        Parameters
+        ----------
+        inarray : `np.array`
+            numpy array with proper HEALpix size.
+        fig : `matplotlib.Figure`
+            A matplotlib figure object. Default of None
+            creates a new figure.
+        add_grat : `bool`
+            Add gratacule to the plot. Default True.
+        grat_params : `dict`
+            Dictionary of kwargs to pass to healpy.graticule.
+            Default of "default" generates a reasonable dict.
+        cb_params : `dict`
+            Dictionary of color bar parameters. Default of "default"
+            uses PlotMoll.default_cb_params to construct defaults. Setting
+            to None uses the default healpy colorbar.
+        log : `bool`
+            Set the colorbar to be log. Default False.
+        **kwargs
+            Kwargs sent to healpy.mollview. E.g.,
+            title, unit, rot, min, max. 
+
+        """
+        if fig is None:
+            fig = plt.figure()
+
+        if grat_params == "default":
+            grat_params = {"dpar": 30, "dmer": 30}
+        # Copy any auto-generated plot kwargs
+        moll_kwarg_dict = copy.copy(self.moll_kwarg_dict)
+        # Override if those things have been set with kwargs
+        for key in kwargs:
+            moll_kwarg_dict[key] = kwargs.get(key)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            if cb_params is None:
+                hp.mollview(inarray, **moll_kwarg_dict, fig=fig.number)
+            else:
+                hp.mollview(inarray, **moll_kwarg_dict, fig=fig.number, cbar=False)
+
+        if add_grat:
+            hp.graticule(**grat_params)
+        self.ax = plt.gca()
+        im = self.ax.get_images()[0]
+
+        if cb_params == "default":
+            cb_params = self.default_cb_params()
+        else:
+            defaults = self.default_cb_params()
+            for key in cb_params:
+                defaults[key] = cb_params[key]
+            cb_params = defaults
+
+        if cb_params["label"] is None:
+            cb_params["label"] = moll_kwarg_dict["unit"]
+
+        cb = plt.colorbar(
+            im,
+            shrink=cb_params["shrink"],
+            aspect=cb_params["aspect"],
+            pad=cb_params["pad"],
+            orientation=cb_params["orientation"],
+            format=cb_params["format"],
+            extendrect=cb_params["extendrect"],
+            extend=cb_params["extend"],
+        )
+        cb.set_label(cb_params["label"], fontsize=cb_params["fontsize"])
+
+        if cb_params["labelsize"] is not None:
+            cb.ax.tick_params(labelsize=cb_params["labelsize"])
+        if log:
+            tick_locator = ticker.LogLocator(numticks=cb_params["n_ticks"])
+            cb.locator = tick_locator
+            cb.update_ticks()
+        else:
+            if cb_params["n_ticks"] is not None:
+                tick_locator = ticker.MaxNLocator(nbins=cb_params["n_ticks"])
+                cb.locator = tick_locator
+                cb.update_ticks()
+        # If outputing to PDF, this fixes the colorbar white stripes
+        if cb_params["cbar_edge"]:
+            cb.solids.set_edgecolor("face")
+
+        return fig
 
 
-class PlotHist(PlotMoll):
+class PlotHist(BasePlot):
+
+    def _gen_ylabel(self):
+        return "#"
+
     def _gen_default_labels(self, info):
-        """
-        """
-        result = {"ylabel": "#"}
+        """ """ 
+        result = {"ylabel": self._gen_ylabel()}
         result["title"] = ""
         result["xlabel"] = ""
         if info is not None:
             if "run_name" in info.keys():
                 result["title"] = info["run_name"]
+            else:
+                result["title"] = ""
+            if "observations_subset" in info.keys():
+                result["title"] += "\n"+info["observations_subset"]
             if "metric: unit" in info.keys():
                 result["xlabel"] = info["metric: unit"]
 
         return result
 
-    def __call__(self, inarray, **kwargs):
-        fig, ax = plt.subplots()
-        _n, _bins, _patches = ax.hist(inarray, **kwargs)
-        ax.set_title(self.plot_dict["title"])
-        ax.set_xlabel(self.plot_dict["xlabel"])
-        ax.set_ylabel(self.plot_dict["ylabel"])
-        
+    def __call__(
+        self,
+        inarray,
+        fig=None,
+        ax=None,
+        title=None,
+        xlabel=None,
+        ylabel=None,
+        histtype="step",
+        bins="optimal",
+        **kwargs,
+    ):
+        """
+        Parameters
+        ----------
+        inarray : `np.array`
+            Vector to be histogrammed.
+        fig : `matplotlib.Figure`
+            Matplotlib Figure object to use. Default None
+            will generate a new Figure.
+        ax : `matplotlib.Axes`
+            Matplotlib Axes object to use. Default None
+            will generate a new axes
+        title,xlabel,ylabel : `str`
+            title to set on Axes. Default None will
+            use auto-generated title from _gen_default_labels method.
+        histtype : `str`
+            Histogram type passed to matplotlib.hist. Default `step`.
+        bins : `np.array`
+            bins passed to matplotlib.hist. Default "optimal" will 
+            compute an "optimal" number of bins.
+        **kwargs
+            Additional keyword arguments passed to `matplotlib.hist`.
+            E.g., range, log, align, cumulative, etc. Note histogram
+            also passes through matplotlib.Patch properties like
+            edgecolor, facecolor, linewidth.
+        """
+
+        if isinstance(bins, str):
+            if bins == "optimal":
+                bins = optimal_bins(inarray)
+
+        overrides = {"title": title, "xlabel": xlabel, "ylabel": ylabel}
+        plot_dict = copy.copy(self.plot_dict)
+        for key in overrides:
+            if overrides[key] is not None:
+                plot_dict[key] = overrides[key]
+
+        if fig is None:
+            fig, ax = plt.subplots()
+
+        _n, _bins, _patches = ax.hist(inarray, histtype=histtype, bins=bins, **kwargs)
+        ax.set_title(plot_dict["title"])
+        ax.set_xlabel(plot_dict["xlabel"])
+        ax.set_ylabel(plot_dict["ylabel"])
+
+        return fig
+
+
+class PlotHealHist(PlotHist):
+    """Make a histogram of a HEALpix array
+    """
+    def __init__(self, info=None, scale=1000):
+        self.scale = scale
+        super().__init__(info=info)
+
+    def _gen_ylabel(self):
+        return "Area (%is of sq degrees)" % self.scale
+
+    def __call__(self, inarray, fig=None, ax=None, histtype="step",
+                 bins="optimal", **kwargs):
+
+        pix_area = hp.nside2pixarea(hp.npix2nside(np.size(inarray)),
+                                    degrees=True) 
+        weights = np.zeros(np.size(inarray)) + pix_area / self.scale
+        super().__call__(inarray, fig=fig, ax=ax, histtype=histtype, weights=weights,
+                         bins=bins, **kwargs)
+
+
+class PlotLine(BasePlot):
+    def __init__(self, info=None):
+        self.info = info
+        self.plot_dict = self._gen_default_labels(info)
+
+    def _gen_default_labels(self, info):
+        result = {"ylabel": ""}
+        result["title"] = ""
+        result["xlabel"] = ""
+        if info is not None:
+            if "run_name" in info.keys():
+                result["title"] = info["run_name"]
+            else:
+                result["title"] = ""
+            if "observations_subset" in info.keys():
+                result["title"] += "\n"+info["observations_subset"]
+
+        return result
+
+    def _gen_default_grid(self):
+        return {"alpha": 0.5}
+
+    def __call__(self, x, y, fig=None, ax=None, title=None,
+                 xlabel=None, ylabel=None, grid_params=None, **kwargs):
+
+        if fig is None:
+            fig, ax = plt.subplots()
+
+        if grid_params is None:
+            grid_params = self._gen_default_grid()
+
+        overrides = {"title": title, "xlabel": xlabel, "ylabel": ylabel}
+        plot_dict = copy.copy(self.plot_dict)
+        for key in overrides:
+            if overrides[key] is not None:
+                plot_dict[key] = overrides[key]
+
+        ax.plot(x, y, **kwargs)
+
+        ax.set_title(plot_dict["title"])
+        ax.set_xlabel(plot_dict["xlabel"])
+        ax.set_ylabel(plot_dict["ylabel"])
+        if isinstance(grid_params, dict):
+            ax.grid(**grid_params)
+
         return fig
 
 
@@ -498,3 +747,85 @@ def gen_summary_row(info, summary_name, value):
     summary["summary_name"] = summary_name
     summary["value"] = value
     return summary
+
+
+def optimal_bins(
+    datain, binmin=None, binmax=None, nbin_max=200, nbin_min=1, verbose=False
+):
+    """
+    Set an 'optimal' number of bins using the Freedman-Diaconis rule.
+
+    Parameters
+    ----------
+    datain : `numpy.ndarray` or `numpy.ma.MaskedArray`
+        The data for which we want to set the bin_size.
+    binmin : `float`
+        The minimum bin value to consider. Default None uses minimum data value.
+    binmax : `float`
+        The maximum bin value to consider. Default None uses maximum data value.
+    nbin_max : `int`
+        The maximum number of bins to create.
+        Sometimes the 'optimal bin_size' implies an unreasonably large number
+        of bins, if the data distribution is unusual. Default 200.
+    nbin_min : `int`
+        The minimum number of bins to create. Default is 1.
+    verbose : `bool`
+        Turn on warning messages. Default False.
+
+    Returns
+    -------
+    nbins : `int`
+        The number of bins.
+    """
+    # if it's a masked array, only use unmasked values
+    if hasattr(datain, "compressed"):
+        data = datain.compressed()
+    else:
+        data = datain
+    # Check that any good data values remain.
+    if data.size == 0:
+        nbins = nbin_max
+        if verbose:
+            warnings.warn(
+                f"No unmasked data available for calculating optimal bin size: returning {nbins} bins"
+            )
+    # Else proceed.
+    else:
+        if binmin is None:
+            binmin = np.nanmin(data)
+        if binmax is None:
+            binmax = np.nanmax(data)
+        cond = np.where((data >= binmin) & (data <= binmax))[0]
+        # Check if any data points remain within binmin/binmax.
+        if np.size(data[cond]) == 0:
+            nbins = nbin_max
+            warnings.warn(
+                "No data available for calculating optimal bin size within range of %f, %f"
+                % (binmin, binmax)
+                + ": returning %i bins" % (nbins)
+            )
+        else:
+            iqr = np.percentile(data[cond], 75) - np.percentile(data[cond], 25)
+            binwidth = 2 * iqr * (np.size(data[cond]) ** (-1.0 / 3.0))
+            nbins = (binmax - binmin) / binwidth
+            if nbins > nbin_max:
+                if verbose:
+                    warnings.warn(
+                        "Optimal bin calculation tried to make %.0f bins, returning %i"
+                        % (nbins, nbin_max)
+                    )
+                nbins = nbin_max
+            if nbins < nbin_min:
+                if verbose:
+                    warnings.warn(
+                        "Optimal bin calculation tried to make %.0f bins, returning %i"
+                        % (nbins, nbin_min)
+                    )
+                nbins = nbin_min
+    if np.isnan(nbins):
+        if verbose:
+            warnings.warn(
+                "Optimal bin calculation calculated NaN: returning %i" % (nbin_max)
+            )
+        nbins = nbin_max
+    return int(nbins)
