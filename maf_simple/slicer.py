@@ -452,7 +452,18 @@ class BasePlot(object):
     def __init__(self, info=None):
 
         self.info = info
-        self.plot_dict = self._gen_default_labels(info)
+        self.generated_plot_dict = self._gen_default_labels(info)
+
+    def _gen_default_labels(info):
+        """Generate any default label values
+        """
+        result = {}
+        return result
+
+    def __call__(self, data, fig=None):
+        if fig is None:
+            fig, ax = plt.subplots()
+        return fig
 
 
 class PlotMoll:
@@ -521,7 +532,8 @@ class PlotMoll:
         cb_params : `dict`
             Dictionary of color bar parameters. Default of "default"
             uses PlotMoll.default_cb_params to construct defaults. Setting
-            to None uses the default healpy colorbar.
+            to None uses the healpy default colorbar. Setting
+            cbar=False and cb_params=None should result in no colorbar.
         log : `bool`
             Set the colorbar to be log. Default False.
         **kwargs
@@ -540,6 +552,7 @@ class PlotMoll:
         for key in kwargs:
             moll_kwarg_dict[key] = kwargs.get(key)
 
+        # mollview seems to throw lots of warnings when using fig.number
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             if cb_params is None:
@@ -552,43 +565,50 @@ class PlotMoll:
         self.ax = plt.gca()
         im = self.ax.get_images()[0]
 
-        if cb_params == "default":
-            cb_params = self.default_cb_params()
+        # Make sure cbar wasn't set to False
+        if "cbar" in kwargs:
+            cbar = kwargs["cbar"]
         else:
-            defaults = self.default_cb_params()
-            for key in cb_params:
-                defaults[key] = cb_params[key]
-            cb_params = defaults
+            cbar = True
 
-        if cb_params["label"] is None:
-            cb_params["label"] = moll_kwarg_dict["unit"]
+        if cbar:
+            if cb_params == "default":
+                cb_params = self.default_cb_params()
+            else:
+                defaults = self.default_cb_params()
+                for key in cb_params:
+                    defaults[key] = cb_params[key]
+                cb_params = defaults
 
-        cb = plt.colorbar(
-            im,
-            shrink=cb_params["shrink"],
-            aspect=cb_params["aspect"],
-            pad=cb_params["pad"],
-            orientation=cb_params["orientation"],
-            format=cb_params["format"],
-            extendrect=cb_params["extendrect"],
-            extend=cb_params["extend"],
-        )
-        cb.set_label(cb_params["label"], fontsize=cb_params["fontsize"])
+            if cb_params["label"] is None:
+                cb_params["label"] = moll_kwarg_dict["unit"]
 
-        if cb_params["labelsize"] is not None:
-            cb.ax.tick_params(labelsize=cb_params["labelsize"])
-        if log:
-            tick_locator = ticker.LogLocator(numticks=cb_params["n_ticks"])
-            cb.locator = tick_locator
-            cb.update_ticks()
-        else:
-            if cb_params["n_ticks"] is not None:
-                tick_locator = ticker.MaxNLocator(nbins=cb_params["n_ticks"])
+            cb = plt.colorbar(
+                im,
+                shrink=cb_params["shrink"],
+                aspect=cb_params["aspect"],
+                pad=cb_params["pad"],
+                orientation=cb_params["orientation"],
+                format=cb_params["format"],
+                extendrect=cb_params["extendrect"],
+                extend=cb_params["extend"],
+            )
+            cb.set_label(cb_params["label"], fontsize=cb_params["fontsize"])
+
+            if cb_params["labelsize"] is not None:
+                cb.ax.tick_params(labelsize=cb_params["labelsize"])
+            if log:
+                tick_locator = ticker.LogLocator(numticks=cb_params["n_ticks"])
                 cb.locator = tick_locator
                 cb.update_ticks()
-        # If outputing to PDF, this fixes the colorbar white stripes
-        if cb_params["cbar_edge"]:
-            cb.solids.set_edgecolor("face")
+            else:
+                if cb_params["n_ticks"] is not None:
+                    tick_locator = ticker.MaxNLocator(nbins=cb_params["n_ticks"])
+                    cb.locator = tick_locator
+                    cb.update_ticks()
+            # If outputing to PDF, this fixes the colorbar white stripes
+            if cb_params["cbar_edge"]:
+                cb.solids.set_edgecolor("face")
 
         return fig
 
@@ -658,7 +678,7 @@ class PlotHist(BasePlot):
                 bins = optimal_bins(inarray)
 
         overrides = {"title": title, "xlabel": xlabel, "ylabel": ylabel}
-        plot_dict = copy.copy(self.plot_dict)
+        plot_dict = copy.copy(self.generated_plot_dict)
         for key in overrides:
             if overrides[key] is not None:
                 plot_dict[key] = overrides[key]
@@ -676,6 +696,15 @@ class PlotHist(BasePlot):
 
 class PlotHealHist(PlotHist):
     """Make a histogram of a HEALpix array
+
+    Parameters
+    ----------
+    info : `dict`
+        Dictionary with information about reduction history
+    scale : `float`
+        Scaling used for plotting area on y-axis. Default of 1000
+        results in 1000s of square degrees as the y-axis value
+        and ylabel.
     """
     def __init__(self, info=None, scale=1000):
         self.scale = scale
@@ -686,6 +715,25 @@ class PlotHealHist(PlotHist):
 
     def __call__(self, inarray, fig=None, ax=None, histtype="step",
                  bins="optimal", **kwargs):
+        """
+        Parameters
+        ----------
+        inarray : `np.array`
+            HEALpix array to be histogrammed.
+        fig : `matplotlib.Figure`
+            Matplotlib figure to use. Default of None
+            generates a new Figure
+        ax : `matplotlib.Axes`
+            Matplotlib Axes to use. If None, one will be created
+        histtype : `str`
+            histogram type passed to matplotlib.Ax.hist. 
+            Default "step".
+        bins : `np.array`
+            Bins passed through to matplotlib.Ax.hist. 
+            Default of "optimal" computes optimal bin sizes.
+        **kwargs
+            Additional kwargs passed to matplotlib.Ax.hist
+        """
 
         pix_area = hp.nside2pixarea(hp.npix2nside(np.size(inarray)),
                                     degrees=True) 
@@ -697,7 +745,7 @@ class PlotHealHist(PlotHist):
 class PlotLine(BasePlot):
     def __init__(self, info=None):
         self.info = info
-        self.plot_dict = self._gen_default_labels(info)
+        self.generated_plot_dict = self._gen_default_labels(info)
 
     def _gen_default_labels(self, info):
         result = {"ylabel": ""}
@@ -718,6 +766,37 @@ class PlotLine(BasePlot):
 
     def __call__(self, x, y, fig=None, ax=None, title=None,
                  xlabel=None, ylabel=None, grid_params=None, **kwargs):
+        """
+        Parameters
+        ----------
+        x : `np.array`
+            Values to plot on the x-axis
+        y : `np.array`
+            Values to plot on the y axis
+        fig : `matplotlib.Figure`
+            Matplotlib figure to use. If None, one will be created
+        ax : `matplotlib.Axes`
+            Matplotlib Axes to use. If None, one will be created
+        title : `str`
+            String to use for plot title. If None, defaults generasted
+            on init are used.
+        xlabel : `str`
+            String for the x-axis label. If None, defaults generasted
+            on init are used.
+        ylabel : `str`
+            String for the y-axis label. If None, defaults generasted
+            on init are used.
+        grid_params : `dict`
+            Dictionary of kwargs to pass to Axes.grid. If None, 
+            default of alpha=0.5 is used. Set to any non-dict value
+            to turn off grid.
+        **kwargs
+            Additional kwargs passed through to matplotlib.Axes.plot
+
+        Returns
+        -------
+        matplotlib.Figure
+        """
 
         if fig is None:
             fig, ax = plt.subplots()
@@ -726,7 +805,7 @@ class PlotLine(BasePlot):
             grid_params = self._gen_default_grid()
 
         overrides = {"title": title, "xlabel": xlabel, "ylabel": ylabel}
-        plot_dict = copy.copy(self.plot_dict)
+        plot_dict = copy.copy(self.generated_plot_dict)
         for key in overrides:
             if overrides[key] is not None:
                 plot_dict[key] = overrides[key]
@@ -738,6 +817,61 @@ class PlotLine(BasePlot):
         ax.set_ylabel(plot_dict["ylabel"])
         if isinstance(grid_params, dict):
             ax.grid(**grid_params)
+
+        return fig
+
+
+class PlotFo(BasePlot):
+    def __init__(self, info=None, scale=1000):
+        self.info = info
+        self.scale = scale
+        self.generated_plot_dict = self._gen_default_labels(info)
+
+    def _gen_default_labels(self, info):
+        result = {"ylabel": "Area (%is of square degrees)" % self.scale}
+        result["title"] = ""
+        result["xlabel"] = "Number of Visits"
+        if info is not None:
+            if "run_name" in info.keys():
+                result["title"] = info["run_name"]
+            else:
+                result["title"] = ""
+            if "observations_subset" in info.keys():
+                result["title"] += "\n"+info["observations_subset"]
+
+        return result
+
+    def __call__(self, nvisits_hparray, fig=None, ax=None, title=None,
+                 xlabel=None, ylabel=None, **kwargs):
+        """
+        Parameters
+        ----------
+        nvisits_hparray : `np.array`
+            Healpix array with the number of visits per HEALpix.
+        """
+        order = np.argsort(nvisits_hparray)
+        pix_area = hp.nside2pixarea(hp.npix2nside(np.size(nvisits_hparray)),
+                                    degrees=True) 
+        cumulative_area_scaled = np.arange(1, order.size+1, 1) * pix_area / self.scale
+
+        if fig is None:
+            fig, ax = plt.subplots()
+
+        overrides = {"title": title, "xlabel": xlabel, "ylabel": ylabel}
+        plot_dict = copy.copy(self.generated_plot_dict)
+        for key in overrides:
+            if overrides[key] is not None:
+                plot_dict[key] = overrides[key]
+
+        ax.plot(nvisits_hparray[order[::-1]], cumulative_area_scaled, **kwargs)
+
+        ax.set_title(plot_dict["title"])
+        ax.set_xlabel(plot_dict["xlabel"])
+        ax.set_ylabel(plot_dict["ylabel"])
+
+        # Add in the reference lines.
+
+        ax.legend(loc="upper right", fontsize="small", numpoints=1, framealpha=1.0)
 
         return fig
 
