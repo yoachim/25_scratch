@@ -53,13 +53,13 @@ class BaseMetric(object):
 
 class MeanMetric(BaseMetric):
     def __init__(self, col="night", unit=None, name="name"):
-        super().__init__(col=col, unit=unit, name="mean")
+        super().__init__(col=col, unit=unit, name=name)
 
     def __call__(self, visits, slice_point=None):
         return np.mean(visits[self.col])
 
 
-class CountMetric(MeanMetric):
+class CountMetric(BaseMetric):
     def __init__(self, col="night", unit="#", name="Count"):
         super().__init__(col=col, unit=unit, name=name)
 
@@ -817,6 +817,146 @@ class PlotLine(BasePlot):
         ax.set_ylabel(plot_dict["ylabel"])
         if isinstance(grid_params, dict):
             ax.grid(**grid_params)
+
+        return fig
+
+
+def project_lambert(longitude, latitude):
+    """Project from RA,dec to plane
+    https://en.wikipedia.org/wiki/Lambert_azimuthal_equal-area_projection
+    """
+
+    # flipping the sign on latitude goes north pole or south pole centered
+    r_polar = 2 * np.cos((np.pi / 2 + latitude) / 2.0)
+    # Add pi/2 so north is up
+    theta_polar = longitude + np.pi / 2
+
+    x = r_polar * np.cos(theta_polar)
+    y = r_polar * np.sin(theta_polar)
+    return x, y
+
+
+def draw_grat(ax):
+    """Draw some graticule lines on an axis"""
+    decs = np.radians(90.0 - np.array([20, 40, 60, 80]))
+    ra = np.radians(np.arange(0, 361, 1))
+    for dec in decs:
+        temp_dec = ra * 0 + dec
+        x, y = project_lambert(ra, temp_dec)
+        ax.plot(x, y, "k--", alpha=0.5)
+
+    ras = np.radians(np.arange(0, 360 + 45, 45))
+    dec = np.radians(90.0 - np.arange(0, 81, 1))
+    for ra in ras:
+        temp_ra = dec * 0 + ra
+        x, y = project_lambert(temp_ra, dec)
+        ax.plot(x, y, "k--", alpha=0.5)
+
+    for dec in decs:
+        x, y = project_lambert(np.radians(45.0), dec)
+        ax.text(x, y, "%i" % np.round(np.degrees(dec)))
+
+    return ax
+
+
+class PlotLambert(BasePlot):
+    """Make a Lambertian projection
+    """
+    def __init__(self, info=None):
+        self.info = info
+        self.generated_plot_dict = self._gen_default_labels(info)
+        self.generated_cb_dict = self._gen_default_cb(info)
+
+    def _gen_default_cb(self, info):
+
+        result = {"labelsize": None,
+                  "format": "%i"}
+
+        if info is not None:
+            if "metric: unit" in info.keys():
+                result["label"] = info["metric: unit"]
+            else:
+                result["label"] = "#"
+
+        return result
+
+    def _gen_default_labels(self, info):
+        result = {}
+        result["title"] = ""
+        result["xlabel"] = ""
+        if info is not None:
+            if "run_name" in info.keys():
+                result["title"] = info["run_name"]
+            else:
+                result["title"] = ""
+            if "observations_subset" in info.keys():
+                result["title"] += "\n"+info["observations_subset"]
+
+        return result
+
+    def _gen_default_grid(self):
+        return {"alpha": 0.5}        
+
+    def __call__(self, values_in, latitudes=None, longitudes=None,
+                 fig=None, ax=None, title=None,
+                 alt_limit=10., levels=200,
+                 **kwargs):
+
+        overrides = {"title": title}
+        plot_dict = copy.copy(self.generated_plot_dict)
+        for key in overrides:
+            if overrides[key] is not None:
+                plot_dict[key] = overrides[key]
+
+        if fig is None:
+            fig, ax = plt.subplots()
+
+        if latitudes is None:
+            # see if we can assume this is a HEALpix
+            nside = hp.npix2nside(np.size(values_in))
+            longitudes, latitudes = utils.hpid2_ra_dec(nside, np.arange(np.size(values_in)))
+        x, y = project_lambert(np.radians(longitudes),
+                               np.radians(latitudes))
+
+        if np.size(levels) == 1:
+            level_step = (np.nanmax(values_in) - np.nanmin(values_in))/levels
+            levels = np.arange(np.nanmin(values_in),
+                               np.nanmax(values_in) + level_step, level_step)
+
+        # non_finite below lowest level
+        mod_val = copy.copy(values_in)
+        finite = np.isfinite(values_in)
+        mod_val[np.invert(finite)] = np.min(levels) - 1
+        tcf = ax.tricontourf(
+            x,
+            y,
+            mod_val,
+            levels,
+            **kwargs,
+        )
+        tcf.set_edgecolors("face")
+
+        ax = draw_grat(ax)
+
+        ax.set_xticks([])
+        ax.set_yticks([])
+        x, y = project_lambert(0, np.radians(alt_limit))
+        max_val = np.max(np.abs([x, y]))
+        ax.set_xlim([-max_val, max_val])
+        ax.set_ylim([-max_val, max_val])
+
+        # Pop in an extra line to raise the title a bit
+        ax.set_title(plot_dict["title"])
+
+        cb_params = self.generated_cb_dict
+
+        cb = plt.colorbar(tcf, format=cb_params["format"])
+        cb.set_label(cb_params["label"])
+        if cb_params["labelsize"] is not None:
+            cb.ax.tick_params(labelsize=cb_params["labelsize"])
+        
+        # If outputing to PDF, this fixes the colorbar white stripes
+        cb.solids.set_edgecolor("face")
 
         return fig
 
