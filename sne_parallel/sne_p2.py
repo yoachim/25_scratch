@@ -15,7 +15,7 @@ visits_array, df, run_name, subset, fig_saver = maf.batch_preamble(
 
 good = np.where(visits_array["night"] < 365)
 visits_array = visits_array[good]
-slicer = maf.Slicer(nside=4)
+slicer = maf.Slicer(nside=8)
 slicer.setup_slicer(visits_array)
 metric = maf.SNNSNMetric()
 
@@ -25,7 +25,7 @@ def call_single_indx(indx):
     return result
 
 
-def launch_jobs(nside=4, num_jobs=3):
+def launch_jobs(nside=8, num_jobs=6):
     nmap = hp.nside2npix(nside)
 
     with Pool(processes=num_jobs) as pool:
@@ -40,11 +40,11 @@ def launch_jobs(nside=4, num_jobs=3):
 
 
 if __name__ == '__main__':
-    nside = 4
+    nside = 8
 
     t1 = datetime.datetime.now()
 
-    parallel_results = launch_jobs()
+    parallel_results = launch_jobs(nside=nside)
     
     info = maf.empty_info()
     info["run_name"] = run_name
@@ -61,7 +61,7 @@ if __name__ == '__main__':
     sn_array, info = sl(visits_array, metric, info=info)
 
     t3 = datetime.datetime.now()
-    print("time to run single core", t3-t2)
+    print("p2, time to run single core", t3-t2)
 
     import pdb ; pdb.set_trace()
 
