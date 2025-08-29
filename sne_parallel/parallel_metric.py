@@ -1,5 +1,6 @@
 import numpy as np
 from itertools import repeat
+import datetime
 
 from multiprocessing import Pool, shared_memory, Manager
 import rubin_sim.maf_proto as maf
@@ -88,8 +89,21 @@ if __name__ == "__main__":
     else:
         metric = maf.SNNSNMetric()
 
+    t1 = datetime.datetime.now()
     result = launch_jobs(shared_data, slicer, metric)
     shared_data.unlink()
+
+    t2 = datetime.datetime.now()
+    print("time to run in parallel", t2-t1)
+
+    # run classic style
+    sl = maf.Slicer(nside=nside)
+    metric = maf.SNNSNMetric()
+
+    sn_array = sl(visits_array, metric)
+
+    t3 = datetime.datetime.now()
+    print("p2, time to run single core", t3-t2)
 
     import pdb ; pdb.set_trace()
 
