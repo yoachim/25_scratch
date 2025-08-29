@@ -43,7 +43,8 @@ class SharedNumpyArray:
 
 
 def call_single_indx(shared_data, shared_metric, shared_slicer, indx):
-    print(indx)
+    # Stupid print to see when it stalls
+    print("computing HEALpix indx=", indx)
     result = shared_slicer(shared_data.read(),
                            shared_metric, 
                            indx=[indx], skip_setup=True)
@@ -69,7 +70,7 @@ def launch_jobs(shared_data, slicer, metric, num_jobs=6):
 if __name__ == "__main__":
 
     nside = 4
-    fast_metric = True
+    fast_metric = False
 
     # Read in observations
     # Read in some visits
