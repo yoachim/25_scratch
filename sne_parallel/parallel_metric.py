@@ -1,9 +1,15 @@
 import numpy as np
+
 from multiprocessing import Pool, shared_memory, Manager
+import rubin_sim.maf_proto as maf
+import sqlite3
+import pandas as pd
+
+from rubin_sim.data import get_baseline
 
 
 class SharedNumpyArray:
-    # https://e-dorigatti.github.io/python/2020/06/19/multiprocessing-large-objects.html
+    # from https://e-dorigatti.github.io/python/2020/06/19/multiprocessing-large-objects.html
     def __init__(self, array):
         # create the shared memory location of the same size of the array
         self._shared = shared_memory.SharedMemory(create=True, size=array.nbytes)
@@ -35,43 +41,50 @@ class SharedNumpyArray:
         self._shared.unlink()
 
 
-class MyClass1():
-    def __init__(self, val):
-        self.val = val
-
-    def _compute_val(self):
-        return self.val
-
-    def __call__(self, data, indx):
-        return np.sum(data[:, indx]) + self._compute_val()
-
-
-class MyClass2():
-    def __call__(self, data, myclass1, indx):
-        return myclass1(data, indx) + myclass1.val
-
-
-def call_single_indx(shared_data, shared_class1, shared_class2, indx):
-    result = shared_class2(shared_data.read(), shared_class1, indx)
+def call_single_indx(shared_data, shared_metric, shared_slicer, indx):
+    
+    result = shared_slicer(shared_data.read(),
+                           shared_metric, 
+                           indx=[indx], skip_setup=True)
     return result
 
 
-def launch_jobs(shared_data, nmap=10, num_jobs=3):
+def launch_jobs(shared_data, slicer, metric, num_jobs=6):
+
     with Manager() as manager:
-        manager.shared_class1 = MyClass1(5)
-        manager.shared_class2 = MyClass2()
-        args = [[shared_data, manager.shared_class1, manager.shared_class2, i] for i in range(nmap)]
+        manager.shared_metric = metric
+        manager.shared_slicer = slicer
+        args = [[shared_data, manager.shared_metric, manager.shared_slicer, i] for i in range(len(slicer))]
+
         with Pool(processes=num_jobs) as pool:
             result = pool.starmap(call_single_indx, args)
-    result = np.array(result)
+    result = np.concatenate(result)
     return result
 
 
 if __name__ == "__main__":
 
-    data = np.arange(400).reshape(20, 20)
-    shared_data = SharedNumpyArray(data)
-    result = launch_jobs(shared_data)
-    print(result)
+    nside = 4
+    fast_metric = True
 
+    # Read in observations
+    # Read in some visits
+    observations = get_baseline()
+    con = sqlite3.connect(observations)
+    df = pd.read_sql("select * from observations where night < 365;", con)
+    visits_array = df.to_records(index=False)
+
+    shared_data = SharedNumpyArray(visits_array)
+    slicer = maf.Slicer(nside=nside)
+    slicer.setup_slicer(visits_array)
+    # Use faster metric for testing
+    if fast_metric:
+        metric = maf.MeanMetric(col="airmass")
+    else:
+        metric = maf.SNNSNMetric()
+
+    result = launch_jobs(shared_data, slicer, metric)
     shared_data.unlink()
+
+    import pdb ; pdb.set_trace()
+
