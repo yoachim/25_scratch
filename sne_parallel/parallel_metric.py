@@ -1,4 +1,5 @@
 import numpy as np
+from itertools import repeat
 
 from multiprocessing import Pool, shared_memory, Manager
 import rubin_sim.maf_proto as maf
@@ -42,7 +43,7 @@ class SharedNumpyArray:
 
 
 def call_single_indx(shared_data, shared_metric, shared_slicer, indx):
-    
+    print(indx)
     result = shared_slicer(shared_data.read(),
                            shared_metric, 
                            indx=[indx], skip_setup=True)
@@ -54,8 +55,11 @@ def launch_jobs(shared_data, slicer, metric, num_jobs=6):
     with Manager() as manager:
         manager.shared_metric = metric
         manager.shared_slicer = slicer
-        args = [[shared_data, manager.shared_metric, manager.shared_slicer, i] for i in range(len(slicer))]
-
+        # make the args iterable
+        args = zip(repeat(shared_data),
+                   repeat(manager.shared_metric),
+                   repeat(manager.shared_slicer),
+                   range(len(slicer)))
         with Pool(processes=num_jobs) as pool:
             result = pool.starmap(call_single_indx, args)
     result = np.concatenate(result)
