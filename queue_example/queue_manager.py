@@ -35,6 +35,7 @@ class RotSkyPosUpdateDetailer(detailers.BaseDetailer):
 def generate_qm():
 
     detailer_list = []
+    #detailer_list.append(detailers.RotspUpdateDetailer())
     detailer_list.append(RotSkyPosUpdateDetailer())
 
     bf_list = []
@@ -58,7 +59,7 @@ class CloudyMO(ModelObservatory):
         extinction_map[np.where(conditions.az < (np.pi/2))] = 5.
         cloud_map.add_frame(extinction_map, conditions.mjd)
 
-        conditions.cloud_map = cloud_map
+        conditions.cloud_maps = cloud_map
 
         return conditions
 
